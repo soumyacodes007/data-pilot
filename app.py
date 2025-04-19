@@ -7,7 +7,6 @@ import io
 import pickle
 from dotenv import load_dotenv
 
-# --- Import ML & LLM Libraries ---
 import google.generativeai as genai
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
@@ -15,22 +14,26 @@ from langchain.agents.agent_types import AgentType
 from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
 from langchain.schema import SystemMessage
 
-# --- Sklearn ---
+
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, RobustScaler # Added RobustScaler
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, RobustScaler 
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge # Added Ridge
+from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge 
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor
 from sklearn.metrics import (accuracy_score, classification_report, confusion_matrix,
                              mean_squared_error, r2_score, mean_absolute_error,
-                             precision_score, recall_score, f1_score) # Added specific metrics
+                             precision_score, recall_score, f1_score)
 
 # --- Visualization ---
 import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
+
+# --- Import Custom Modules ---
+import ml_agent # Added import
+import model_tester # Import the new tester module
 
 # --- Load Environment Variables ---
 load_dotenv()
@@ -73,7 +76,10 @@ def initialize_session_state():
         'agent_initialized': False, 'llm_initialized': False,
         'X_test': None, 'y_test': None, 'google_api_key': None,
         'feature_instructions': '', 'engineered_df': None, 
-        'feature_code': None, 'feature_steps': None
+        'feature_code': None, 'feature_steps': None,
+        'model_instructions': '', 'custom_model': None, 
+        'custom_model_code': None, 'custom_model_results': None,
+        'custom_model_name': None
     }
     for key, default in keys_defaults.items():
         if key not in st.session_state:
@@ -646,12 +652,14 @@ elif not st.session_state.task_type:
      st.error(f"Could not determine if '{st.session_state.target_variable}' implies a Classification or Regression task. Please check the data in this column.")
 else:
     # Data and target are ready, display tabs
-    tab_explore, tab_train, tab_report, tab_chat, tab_feature_eng = st.tabs([
+    tab_explore, tab_train, tab_report, tab_chat, tab_feature_eng, tab_model_agent, tab_model_tester = st.tabs([
         "🔎 Explore Data",
         "🚀 Train & Compare Models",
         "💡 View Report & Insights",
         "💬 Chat with Data",
-        "🧪 Feature Engineering"
+        "🧪 Feature Engineering",
+        "🤖 ML Model Agent",
+        "📊 Test Model" # Added new tab
     ])
 
     with tab_explore:
@@ -676,10 +684,10 @@ else:
         else:
             st.success("✅ No missing values found!")
 
-        # Basic EDA Plots (Consider moving generate_eda_plots here if needed)
+        
         st.subheader("Basic Distributions")
-        # Histograms for numerical features (excluding target if numerical)
-        num_to_plot = [c for c in st.session_state.numerical_features] # Features only
+       
+        num_to_plot = [c for c in st.session_state.numerical_features] 
         if num_to_plot:
             st.write("#### Numerical Feature Histograms")
             num_plots = len(num_to_plot)
@@ -705,7 +713,7 @@ else:
                          plot_idx += 1
 
 
-        # Countplots for categorical features
+        
         cat_to_plot = [c for c in st.session_state.categorical_features] # Features only
         if cat_to_plot:
              st.write("#### Categorical Feature Counts")
@@ -1080,34 +1088,66 @@ else:
                                         if code_match:
                                             feature_code = code_match.group(1)
                                         
-                                        # Execute the code to get engineered dataframe
-                                        import types
+                                        # Initialize a flag to track if code extraction was successful
+                                        code_extracted_successfully = False
                                         
-                                        # Create a module-like object to hold the function
-                                        module = types.ModuleType('feature_engineering')
+                                        # If the code is wrapped in markdown code blocks, extract it
+                                        if not feature_code.strip():
+                                            code_match = re.search(r'```python\s*(.*?)\s*```', response_text, re.DOTALL)
+                                            if code_match:
+                                                feature_code = code_match.group(1)
+                                        else:
+                                            code_match = re.search(r'```python\s*(.*?)\s*```', feature_code, re.DOTALL)
+                                            if code_match:
+                                                feature_code = code_match.group(1)
                                         
-                                        # Execute the code string in the module's namespace
-                                        exec(feature_code, module.__dict__)
+                                        # Check if code was extracted and set the flag
+                                        if feature_code.strip():
+                                            code_extracted_successfully = True
+                                        else:
+                                            st.error("No feature engineering code could be extracted from the response")
+                                            st.session_state.feature_code = response_text  # Save the raw response for debugging
+                                            st.session_state.feature_steps = None
+                                            st.session_state.engineered_df = None
                                         
-                                        # Get the function from the module
-                                        engineer_features = getattr(module, 'engineer_features')
-                                        
-                                        # Apply function to the data
-                                        engineered_df = engineer_features(st.session_state.df.copy())
-                                        
-                                        # Save results to session state
-                                        st.session_state.engineered_df = engineered_df
-                                        st.session_state.feature_code = feature_code
-                                        st.session_state.feature_steps = recommended_steps
-                                        st.session_state.feature_instructions = feature_instructions  # Save the instructions
-                                        
-                                        st.success("✅ Feature engineering completed successfully!")
+                                        # Only execute the feature engineering code if it was extracted successfully
+                                        if code_extracted_successfully:
+                                            try:
+                                                st.code(feature_code, language='python')
+                                                import types
+                                                
+                                                # Create a module-like object to hold the function
+                                                module = types.ModuleType('feature_engineering')
+                                                
+                                                # Execute the code string in the module's namespace
+                                                exec(feature_code, module.__dict__)
+                                                
+                                                # Get the function from the module
+                                                engineer_features = getattr(module, 'engineer_features')
+                                                
+                                                # Apply function to the data
+                                                engineered_df = engineer_features(st.session_state.df.copy())
+                                                
+                                                # Save results to session state
+                                                st.session_state.engineered_df = engineered_df
+                                                st.session_state.feature_code = feature_code
+                                                st.session_state.feature_steps = recommended_steps
+                                                st.session_state.feature_instructions = feature_instructions  # Save the instructions
+                                                
+                                                st.success("✅ Feature engineering completed successfully!")
+                                            
+                                            except Exception as e:
+                                                st.error(f"Error executing generated feature engineering code: {e}")
+                                                # Keep code for debugging, but clear results
+                                                st.session_state.engineered_df = None
+                                                st.session_state.feature_code = response_text  # Save the raw response for debugging
+                                                st.session_state.feature_steps = None
                                         
                                     except Exception as e:
-                                        st.error(f"Error processing or executing feature engineering: {e}")
-                                        st.session_state.engineered_df = None
-                                        st.session_state.feature_code = response.content  # Save the raw response for debugging
+                                        st.error(f"Error processing LLM response or parsing JSON: {e}")
+                                        st.session_state.feature_code = response.content if 'response' in locals() and hasattr(response, 'content') else 'Error during LLM call'
                                         st.session_state.feature_steps = None
+                                        st.session_state.engineered_df = None
                                         
                             except Exception as e:
                                 st.error(f"An unexpected error occurred during feature engineering: {e}")
@@ -1187,6 +1227,14 @@ else:
                     
                     st.success("✅ Dataset updated to use engineered features! Navigate to other tabs to continue your analysis.")
                     st.experimental_rerun()  # Rerun the app to reflect changes
+
+    # --- ML Model Agent Tab (Using imported module) ---
+    with tab_model_agent:
+        ml_agent.render_ml_agent_tab(st) # Added call to module function
+
+    # --- Model Tester Tab (Using imported module) ---
+    with tab_model_tester: # Added new tab block
+        model_tester.render_model_tester_tab(st) # Call function from model_tester.py
 
 # --- Footer ---
 st.sidebar.divider()
