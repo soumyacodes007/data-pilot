@@ -14,3 +14,10 @@
 - **Show you the results** - Visuals, accuracy scores, and performance breakdowns all easy to understand.
     
 - **Generate a smart report** - Get a downloadable summary of what we found and what it means for you which is understandable for normal people
+
+**Target Audience**
+- Data Analysts - to reduce the work force and deliver ML insights without code.
+- Beginner ML user - Build and use models without coding or deep ML knowledge
+- Financial Analyst - Forecast trends and identify anomalies in transactions
+- Business Analyst - Transform raw data into predictive insights for smarter decision-making
+- Product Manager - Quickly validate product hypotheses and optimize features using data-driven insights
