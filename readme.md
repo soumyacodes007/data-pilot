@@ -1,1 +1,2 @@
-this is data pilot jdssjj uhdfh
+  DataPilot offers a no-code platform that automates the end-to-end machine learning process from data ingestion to insight generation. Its unique capability is in its automation of data cleaning, model training, evaluation, and hyperparameter tuning powered by ai agents  allowing individuals without ML expertise to access advanced analytics. By doing so, it accelerates decision-making and innovation across different domains. 
+  
