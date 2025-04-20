@@ -34,6 +34,7 @@ from io import BytesIO
 # --- Import Custom Modules ---
 import ml_agent # Added import
 import model_tester # Import the new tester module
+import eda # Add import for the new EDA module
 
 # --- Load Environment Variables ---
 load_dotenv()
@@ -42,7 +43,7 @@ load_dotenv()
 CLASSIFICATION_MODELS = {
     'LogisticRegression': LogisticRegression(max_iter=1000, random_state=42),
     'RandomForestClassifier': RandomForestClassifier(random_state=42),
-    'GradientBoostingClassifier': GradientBoostingClassifier(random_state=42)
+    'GradientBoostingClassifier': LogisticRegression(max_iter=1000, random_state=42)
 }
 REGRESSION_MODELS = {
     'LinearRegression': LinearRegression(),
@@ -55,7 +56,7 @@ REGRESSION_MODELS = {
 PARAM_GRIDS = {
     'LogisticRegression': {'model__C': [0.1, 1.0, 10.0]},
     'RandomForestClassifier': {'model__n_estimators': [50, 100], 'model__max_depth': [5, 10, None]},
-    'GradientBoostingClassifier': {'model__n_estimators': [50, 100], 'model__learning_rate': [0.05, 0.1]},
+    'GradientBoostingClassifier': {'model__C': [0.1, 1.0, 10.0]},
     'LinearRegression': {}, # No typical hyperparameters to tune simply
     'Ridge': {'model__alpha': [0.1, 1.0, 10.0]},
     'RandomForestRegressor': {'model__n_estimators': [50, 100], 'model__max_depth': [5, 10, None]},
@@ -374,167 +375,74 @@ def get_llm(api_key):
         st.session_state.llm_initialized = False
         return None
 
-def create_agent(df, api_key):
-    """Creates a Langchain agent to interact with the dataframe."""
-    llm = get_llm(api_key)
-    if llm is None:
-        st.session_state.agent_initialized = False
-        return None
-    try:
-        # Ensure a fresh copy of the dataframe is used
-        df_copy = df.copy()
-        agent = create_pandas_dataframe_agent(
-            llm,
-            df_copy, # Use the copy
-            verbose=True,
-            agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-            handle_parsing_errors="Check your output and make sure it conforms, use fixed type!", # More specific error message
-            agent_executor_kwargs={"handle_parsing_errors": True},
-            allow_dangerous_code=True, # Necessary for pandas agent
-            return_intermediate_steps=False # Keep it simple for user output
-        )
-        st.session_state.agent_initialized = True
-        return agent
-    except Exception as e:
-        st.error(f"Error creating Langchain agent: {e}")
-        st.session_state.agent_initialized = False
-        return None
-
-def generate_llm_report(api_key, results_data):
-    """Generates a human-readable report using an LLM."""
-    if not results_data or not results_data.get('all_model_results'):
-        return "No model results available to generate a report."
+# --- Function to generate Business Insights from Data ---
+# Refactored function
+def generate_llm_report(api_key: str, df: pd.DataFrame, target_variable: str, numerical_features: list, categorical_features: list):
+    """Generates business-focused insights using an LLM based on data analysis."""
+    if df is None or df.empty:
+        return "No data available to generate insights."
+    if not target_variable:
+        return "Please select a target variable first."
 
     llm = get_llm(api_key)
     if not llm:
-        return "LLM could not be initialized. Cannot generate report."
+        return "LLM could not be initialized. Cannot generate insights."
 
-    all_results = results_data['all_model_results']
-    best_model_name = results_data['best_model_name']
-    task_type = results_data['task_type']
-    primary_metric = results_data['primary_metric']
-    target = st.session_state.target_variable
-    numerical_features = st.session_state.numerical_cols # Get features from session state
-    categorical_features = st.session_state.categorical_cols
-    num_rows = st.session_state.df.shape[0]
-    num_cols = st.session_state.df.shape[1]
+    # --- Generate a concise data summary for the LLM ---
+    data_summary_parts = []
+    data_summary_parts.append(f"Dataset Overview: {df.shape[0]} customers, {df.shape[1]} data points per customer.")
+    data_summary_parts.append(f"Business Goal: Understand factors influencing '{target_variable}'.")
+    data_summary_parts.append(f"\nKey Data Points Tracked:")
+    data_summary_parts.append(f"  - Numerical: {', '.join(numerical_features) if numerical_features else 'None'}")
+    data_summary_parts.append(f"  - Categorical/Textual: {', '.join(categorical_features) if categorical_features else 'None'}")
 
+    # Basic stats for numerical features
+    if numerical_features:
+        data_summary_parts.append("\nNumerical Data Summary (Averages):")
+        try:
+            # Show mean for numerical features, maybe grouped by target for comparison if target is suitable
+            if df[target_variable].nunique() < 10 and not pd.api.types.is_object_dtype(df[target_variable]): # Basic check for suitable target grouping
+                 grouped_means = df.groupby(target_variable)[numerical_features].mean().round(2)
+                 data_summary_parts.append(grouped_means.to_string())
+            else:
+                 means = df[numerical_features].mean().round(2)
+                 data_summary_parts.append(means.to_string())
+        except Exception as e:
+            data_summary_parts.append(f"(Could not generate numerical summary: {e})")
 
-    # --- Build the Prompt ---
-    prompt_start = f"""
-You are an AI assistant acting as 'DataPilot', explaining machine learning results to a non-technical user.
-Your goal is to provide a clear, concise, and easy-to-understand summary of the automated modeling process and its outcome.
+    # Value counts for key categorical features (limit to avoid overwhelming)
+    if categorical_features:
+        data_summary_parts.append("\nCategorical Data Summary (Most Common Categories):")
+        cats_to_summarize = categorical_features[:5] # Limit to first 5 for brevity
+        for cat in cats_to_summarize:
+            try:
+                top_cats = df[cat].value_counts().head(3) # Show top 3
+                data_summary_parts.append(f"  - {cat}: {', '.join([f'{idx} ({val})' for idx, val in top_cats.items()])} ...")
+            except Exception as e:
+                 data_summary_parts.append(f"(Could not summarize {cat}: {e})")
 
-**Project Goal:** Predict the target variable '{target}' using the provided dataset.
-**Task Type:** This was identified as a **{task_type}** task.
-**Dataset:** The dataset has {num_rows} rows and {num_cols} columns.
-**Features Used:**
-  - Numerical: {', '.join(numerical_features) if numerical_features else 'None'}
-  - Categorical: {', '.join(categorical_features) if categorical_features else 'None'}
+    data_summary = "\n".join(data_summary_parts)
 
-**Automated Process Summary:**
-1.  **Data Preparation:** The data was automatically prepared by:
-    *   Handling missing numerical values (using the median).
-    *   Handling missing categorical values (using the most frequent value).
-    *   Scaling numerical features to a standard range ({'RobustScaler used for regression' if task_type=='Regression' else 'StandardScaler used'}).
-    *   Converting categorical features into numerical representations (using One-Hot Encoding).
-2.  **Model Training & Tuning:** Several standard {task_type.lower()} models were trained and compared. Basic hyperparameter tuning (GridSearch) was performed to find good settings for each model.
-3.  **Evaluation:** Models were evaluated on a hidden test set (20% of the data) using standard metrics.
+    # --- Build the NEW Prompt for Business Insights ---
+    final_prompt = f"""
+You are an experienced Business Analyst. You are given a summary of customer data for a business.
+Your goal is to identify actionable insights directly from the data patterns to help the business achieve its goal related to '{target_variable}'.
 
-**Model Comparison Results:**
-Here's a summary of how the tested models performed on the test data:
+*   Focus on identifying characteristics of different customer groups based on the data provided.
+*   Highlight any patterns that seem strongly related to the target variable '{target_variable}'.
+*   Suggest 2-3 specific, actionable business strategies based *only* on these data patterns. Examples: target specific customer segments for marketing, adjust pricing based on usage patterns, focus retention efforts on groups showing high risk, identify potential upselling opportunities.
+*   Write clearly and concisely for a non-technical business audience. Avoid technical jargon like 'correlation', 'p-value', 'feature', 'model', etc. Use terms like 'customer characteristics', 'data points', 'patterns', 'trends'.
+*   Base your analysis *only* on the summary provided below. Do not invent data or assume external knowledge.
+
+**Data Summary:**
+{data_summary}
+
+**Your Business Analysis & Recommendations:**
 """
-    # Add model results table to prompt
-    results_summary = []
-    for name, res in all_results.items():
-        if 'error' in res:
-            results_summary.append(f"- {name}: Error during training ({res['error']})")
-            continue
-
-        if task_type == "Classification":
-            acc = res.get('accuracy_test', 'N/A')
-            f1 = res.get('f1_test', 'N/A')
-            results_summary.append(f"- {name}: Accuracy = {acc:.4f}, F1 Score = {f1:.4f}")
-        else: # Regression
-            r2 = res.get('r2_test', 'N/A')
-            rmse = res.get('rmse_test', 'N/A')
-            results_summary.append(f"- {name}: R² Score = {r2:.4f}, RMSE = {rmse:.4f}")
-
-    prompt_results = "\n".join(results_summary)
-
-    prompt_best_model_intro = f"""
-**Best Performing Model:**
-The model that performed best on the test data was **{best_model_name}**.
-"""
-    # Add best model specific metrics
-    best_model_metrics_text = ""
-    best_res = all_results.get(best_model_name, {})
-    if best_res and 'error' not in best_res:
-         if task_type == "Classification":
-             acc = best_res.get('accuracy_test', 'N/A')
-             f1 = best_res.get('f1_test', 'N/A')
-             prec = best_res.get('precision_test', 'N/A')
-             rec = best_res.get('recall_test', 'N/A')
-             best_model_metrics_text = f"""
-Key metrics for {best_model_name}:
-  - **Accuracy:** {acc:.4f}
-  - **Precision (weighted):** {prec:.4f}
-  - **Recall (weighted):** {rec:.4f}
-  - **F1 Score (weighted):** {f1:.4f}
-"""
-         else: # Regression
-             r2 = best_res.get('r2_test', 'N/A')
-             rmse = best_res.get('rmse_test', 'N/A')
-             mae = best_res.get('mae_test', 'N/A')
-             best_model_metrics_text = f"""
-Key metrics for {best_model_name}:
-  - **R² Score:** {r2:.4f}
-  - **Root Mean Squared Error (RMSE):** {rmse:.4f}
-  - **Mean Absolute Error (MAE):** {mae:.4f}
-"""
-
-    # Explain metrics simply
-    explain_metrics_prompt = ""
-    if task_type == "Classification":
-        explain_metrics_prompt = """
-**What do these metrics mean (simply)?**
-  - **Accuracy:** Percentage of predictions the model got right overall. (Higher is better)
-  - **Precision:** Out of all the times the model predicted a certain class, how often was it correct? (Important when the cost of a false positive is high). (Higher is better)
-  - **Recall:** Out of all the actual instances of a certain class, how many did the model correctly identify? (Important when the cost of a false negative is high). (Higher is better)
-  - **F1 Score:** A combined measure of Precision and Recall. Good balance between the two. (Higher is better)
-"""
-    else: # Regression
-        explain_metrics_prompt = """
-**What do these metrics mean (simply)?**
-  - **R² Score:** How much of the variation in the target variable is explained by the model. Ranges from 0 to 1 (or negative if the model is worse than just predicting the average). (Closer to 1 is better)
-  - **RMSE (Root Mean Squared Error):** The typical difference between the model's prediction and the actual value, in the same units as the target variable. (Lower is better)
-  - **MAE (Mean Absolute Error):** The average absolute difference between the prediction and the actual value. Easier to interpret than RMSE. (Lower is better)
-"""
-
-    # Conclusion / Next Steps Prompt
-    prompt_conclusion = """
-**Key Takeaways & Next Steps:**
-*   The automated process identified '{best_model_name}' as the most promising model for predicting '{target}' based on the provided data and chosen metrics.
-*   You can download this trained model for potential use elsewhere.
-*   Remember, model performance depends heavily on the data quality and the features used. Further analysis or feature engineering might improve results.
-*   Consider using the 'Chat with Data' tab to explore specific aspects of your data further.
-
-**Disclaimer:** This is an automated analysis. Always critically evaluate model results in the context of your specific domain knowledge and goals.
-"""
-
-    # Combine all parts into the final prompt
-    final_prompt = (
-        prompt_start
-        + prompt_results
-        + prompt_best_model_intro
-        + best_model_metrics_text
-        + explain_metrics_prompt
-        + prompt_conclusion
-    )
 
     # --- Invoke LLM ---
     try:
-        system_message = SystemMessage(content="You are DataPilot, an AI explaining ML results simply.")
+        system_message = SystemMessage(content="You are a Business Analyst providing actionable insights from data.")
         human_message = HumanMessagePromptTemplate.from_template("{user_prompt}")
         chat_prompt = ChatPromptTemplate.from_messages([system_message, human_message])
 
@@ -652,14 +560,14 @@ elif not st.session_state.task_type:
      st.error(f"Could not determine if '{st.session_state.target_variable}' implies a Classification or Regression task. Please check the data in this column.")
 else:
     # Data and target are ready, display tabs
-    tab_explore, tab_train, tab_report, tab_chat, tab_feature_eng, tab_model_agent, tab_model_tester = st.tabs([
+    tab_explore, tab_train, tab_report, tab_advanced_eda, tab_feature_eng, tab_model_agent, tab_model_tester = st.tabs([
         "🔎 Explore Data",
         "🚀 Train & Compare Models",
         "💡 View Report & Insights",
-        "💬 Chat with Data",
+        "📊 Advanced EDA",
         "🧪 Feature Engineering",
         "🤖 ML Model Agent",
-        "📊 Test Model" # Added new tab
+        "📊 Test Model"
     ])
 
     with tab_explore:
@@ -733,10 +641,12 @@ else:
                                  fig, ax = plt.subplots(figsize=(6, 4))
                                  if n_unique > max_cats_to_show:
                                      top_cats = st.session_state.df[col_name].value_counts().nlargest(max_cats_to_show).index
-                                     sns.countplot(y=col_name, data=st.session_state.df[st.session_state.df[col_name].isin(top_cats)], order=top_cats, ax=ax, palette='viridis')
+                                     # Assign y variable to hue and set legend=False
+                                     sns.countplot(y=col_name, data=st.session_state.df[st.session_state.df[col_name].isin(top_cats)], order=top_cats, ax=ax, palette='viridis', hue=col_name, legend=False)
                                      ax.set_title(f'{col_name} (Top {max_cats_to_show})')
                                  else:
-                                     sns.countplot(y=col_name, data=st.session_state.df, order=st.session_state.df[col_name].value_counts().index, ax=ax, palette='viridis')
+                                     # Assign y variable to hue and set legend=False
+                                     sns.countplot(y=col_name, data=st.session_state.df, order=st.session_state.df[col_name].value_counts().index, ax=ax, palette='viridis', hue=col_name, legend=False)
                                      ax.set_title(f'{col_name}')
                                  plt.tight_layout()
                                  st.pyplot(fig)
@@ -846,21 +756,24 @@ else:
 
 
     with tab_report:
-        st.header("💡 Report and Insights")
-        if not st.session_state.get("results"):
-            st.info("Train models in the '🚀 Train & Compare Models' tab first to generate a report and download assets.")
+        st.header("💡 Business Insights from Data")
+        if st.session_state.df is None or not st.session_state.target_variable:
+            st.info("Load data and select a target variable in the sidebar first to generate business insights.")
         else:
             # Button to generate LLM report
-            st.subheader("🤖 AI Generated Report")
-            if st.button("📝 Generate AI Summary Report", key="generate_report_button"):
+            st.subheader("🤖 AI Generated Business Insights")
+            if st.button("📝 Generate AI Insights Report", key="generate_report_button"):
                 if not st.session_state.api_key_provided:
                     st.error("Google API Key needed in the sidebar to generate the AI report.")
                 else:
-                    with st.spinner("🧠 AI is analyzing results and writing the report..."):
+                    with st.spinner("🧠 AI is analyzing data and writing the report..."):
                         try:
                             report_text = generate_llm_report(
                                 st.session_state.google_api_key,
-                                st.session_state.results_meta # Pass the dict containing results and meta info
+                                st.session_state.df,
+                                st.session_state.target_variable,
+                                st.session_state.numerical_features,
+                                st.session_state.categorical_features
                             )
                             st.session_state.llm_report = report_text
                         except Exception as e:
@@ -872,17 +785,17 @@ else:
                 st.markdown(st.session_state.llm_report)
                 # Download button for the report
                 st.download_button(
-                    label="📥 Download AI Report (.txt)",
+                    label="📥 Download AI Insights Report (.txt)",
                     data=st.session_state.llm_report,
-                    file_name="datapilot_ai_report.txt",
+                    file_name="datapilot_ai_business_insights.txt",
                     mime="text/plain"
                 )
             else:
-                 st.info("Click the button above to generate an AI-powered summary of the results.")
+                 st.info("Click the button above to generate AI-powered business insights based on your data.")
 
 
             # Download options for the best model
-            st.subheader("💾 Download Best Model")
+            st.subheader("💾 Download Best Trained Model (Optional)")
             if st.session_state.get('best_model'):
                 model_buffer = io.BytesIO()
                 pickle.dump(st.session_state.best_model, model_buffer)
@@ -898,50 +811,21 @@ else:
                 st.warning("No best model available to download.")
 
 
-    with tab_chat:
-        st.header("💬 Chat with Your Data")
-        st.info("Ask questions about your uploaded dataset in natural language. (e.g., 'How many rows?', 'What's the average age?', 'Plot price distribution')")
-
-        if not st.session_state.api_key_provided:
-            st.warning("Please provide your Google API Key in the sidebar to use the chat feature.", icon="🔑")
+    with tab_advanced_eda:
+        st.header("📊 Advanced Exploratory Data Analysis")
+        if st.session_state.df is not None:
+            # Call the function from the imported eda module
+            try:
+                eda.render_eda_tab(st)
+            except AttributeError:
+                 st.error("The `eda.py` file does not have a `render_eda_tab(st)` function. Please ensure it exists.")
+            except ImportError:
+                 st.error("Could not import the `eda` module. Make sure `eda.py` is in the same directory.")
+            except Exception as e:
+                 st.error(f"An error occurred while rendering the Advanced EDA tab: {e}")
         else:
-            # Initialize agent if not already done and API key is valid
-            if not st.session_state.agent_initialized and st.session_state.df is not None:
-                 with st.spinner("Initializing AI Chat Agent..."):
-                     st.session_state.agent = create_agent(st.session_state.df, st.session_state.google_api_key)
+            st.info("Upload data first to see advanced EDA.")
 
-            if st.session_state.agent_initialized and st.session_state.agent:
-                # Display chat messages
-                for message in st.session_state.messages:
-                    with st.chat_message(message["role"]):
-                        st.markdown(message["content"])
-
-                # Accept user input
-                if prompt := st.chat_input("Ask about your data..."):
-                    # Add user message to history and display
-                    st.session_state.messages.append({"role": "user", "content": prompt})
-                    with st.chat_message("user"):
-                        st.markdown(prompt)
-
-                    # Get assistant response
-                    with st.chat_message("assistant"):
-                        message_placeholder = st.empty()
-                        with st.spinner("Thinking..."):
-                            try:
-                                # The agent was created with a copy, should be fine for queries
-                                response = st.session_state.agent.run(prompt)
-                                message_placeholder.markdown(response)
-                            except Exception as e:
-                                error_msg = f"Sorry, I encountered an error processing your request: {e}"
-                                st.error(error_msg)
-                                response = error_msg # Store error as response
-
-                        # Add assistant response to history
-                        st.session_state.messages.append({"role": "assistant", "content": response})
-            elif st.session_state.df is None:
-                st.info("Upload a CSV file to enable chat.")
-            else:
-                 st.error("AI Chat Agent could not be initialized. Please check your API key and ensure data is loaded.")
 
     # Add a new tab for Feature Engineering
     with tab_feature_eng:
@@ -1228,11 +1112,11 @@ else:
                     st.success("✅ Dataset updated to use engineered features! Navigate to other tabs to continue your analysis.")
                     st.experimental_rerun()  # Rerun the app to reflect changes
 
-    # --- ML Model Agent Tab (Using imported module) ---
+  
     with tab_model_agent:
         ml_agent.render_ml_agent_tab(st) # Added call to module function
 
-    # --- Model Tester Tab (Using imported module) ---
+    
     with tab_model_tester: # Added new tab block
         model_tester.render_model_tester_tab(st) # Call function from model_tester.py
 

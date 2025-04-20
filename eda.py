@@ -200,116 +200,119 @@ def generate_gemini_insights(data_summary: str, api_key: str) -> str | None:
 
 # --- Streamlit App UI ---
 
-st.set_page_config(page_title="EDA Bot (Sweetviz & Gemini)", layout="wide")
+# Adjust the function name to match the call in app.py
+def render_eda_tab(st_module):
+    """Renders the EDA components within a Streamlit tab.
 
-st.title("📊 Automated EDA Bot")
-st.markdown("Upload a CSV file to perform Exploratory Data Analysis using Sweetviz and get AI-powered insights from Google Gemini.")
+    Args:
+        st_module: The Streamlit module (passed as 'st').
+    """
+    # Use st_module instead of st directly within this function
+    st_module.title("📊 Automated EDA Bot")
+    st_module.markdown("Explore your data using Sweetviz, dtale, and get AI-powered insights from Google Gemini.")
 
-# --- Sidebar for Configuration ---
-with st.sidebar:
-    st.header("Configuration")
-    # Option 1: Load API Key from .env (preferred)
-    api_key_env = os.getenv("GOOGLE_API_KEY")
-    # Option 2: Allow user to paste API Key
-    api_key_input = st.text_input("Enter Google Gemini API Key (optional)", type="password", value=api_key_env or "")
+    # --- Sidebar is handled in app.py, but we need API key and file --- 
+    # --- We'll rely on app.py managing the data loading via session state --- 
+    
+    # Retrieve necessary items from session state (assuming they are set in app.py)
+    df = st_module.session_state.get('df', None)
+    api_key = st_module.session_state.get('google_api_key', None)
+    
+    if df is None:
+        st_module.warning("No data loaded. Please upload a CSV file in the main app sidebar.")
+        return # Exit if no data
 
-    st.markdown("---")
-    st.header("Upload Data")
-    uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"])
-    st.markdown("---")
-    st.info("This app uses Sweetviz for report generation, dtale for interactive exploration (opens in new tab), and Google Gemini for analysis summary.")
+    # --- Main Area within the Tab --- 
+    st_module.success(f"Using loaded dataset ({df.shape[0]} rows, {df.shape[1]} columns)")
 
-# --- Main Area ---
-if uploaded_file is not None:
-    df = load_data(uploaded_file)
-
-    if df is not None:
-        st.success(f"Successfully loaded {uploaded_file.name} ({df.shape[0]} rows, {df.shape[1]} columns)")
-
-        # Initialize session state variables if they don't exist
-        if 'gemini_insights' not in st.session_state:
-            st.session_state.gemini_insights = None
-        if 'sweetviz_report_path' not in st.session_state:
-            st.session_state.sweetviz_report_path = None
-        if 'dtale_url' not in st.session_state:
-             st.session_state.dtale_url = None
-
-
-        tab1, tab2, tab3, tab4 = st.tabs([" Glimpse Data ", " Sweetviz Report ", " Gemini AI Analysis ", " dtale Interactive "])
-
-        with tab1:
-            st.subheader("Data Preview (First 10 Rows)")
-            st.dataframe(df.head(10))
-            st.subheader("Basic Information")
-            buffer = io.StringIO()
-            df.info(buf=buffer)
-            st.text(buffer.getvalue())
+    # Initialize session state variables if they don't exist (prefix to avoid potential conflicts)
+    if 'eda_gemini_insights' not in st_module.session_state:
+        st_module.session_state.eda_gemini_insights = None
+    if 'eda_sweetviz_report_path' not in st_module.session_state:
+        st_module.session_state.eda_sweetviz_report_path = None
+    if 'eda_dtale_url' not in st_module.session_state:
+         st_module.session_state.eda_dtale_url = None
 
 
-        with tab2:
-            st.subheader("Sweetviz EDA Report")
-            if st.button("Generate Sweetviz Report", key="sv_button"):
-                with st.spinner("Generating Sweetviz report... this might take a minute."):
-                    report_path = generate_sweetviz_report(df, SWEETVIZ_REPORT_PATH)
-                    st.session_state.sweetviz_report_path = report_path # Store path in session
+    tab1, tab2, tab3, tab4 = st_module.tabs([" Glimpse Data ", " Sweetviz Report ", " Gemini AI Analysis ", " dtale Interactive "])
 
-            # Display report if path exists in session state
-            if st.session_state.sweetviz_report_path and os.path.exists(st.session_state.sweetviz_report_path):
-                 st.success(f"Report generated: {st.session_state.sweetviz_report_path}")
-                 try:
-                     with open(st.session_state.sweetviz_report_path, 'r', encoding='utf-8') as f:
-                         html_content = f.read()
-                     st.components.v1.html(html_content, height=800, scrolling=True)
-                 except Exception as e:
-                     st.error(f"Error reading or displaying Sweetviz HTML report: {e}")
-                     st.info("Try generating the report again.")
-            elif 'sv_button' in st.session_state and not st.session_state.sweetviz_report_path :
-                 st.warning("Report generation failed or was skipped. Click the button above.")
+    with tab1:
+        st_module.subheader("Data Preview (First 10 Rows)")
+        st_module.dataframe(df.head(10))
+        st_module.subheader("Basic Information")
+        buffer = io.StringIO()
+        df.info(buf=buffer)
+        st_module.text(buffer.getvalue())
 
 
-        with tab3:
-            st.subheader("Gemini AI Analysis")
-            st.markdown("Get AI-powered insights based on basic data statistics.")
+    with tab2:
+        st_module.subheader("Sweetviz EDA Report")
+        if st_module.button("Generate Sweetviz Report", key="gen_sweetviz_btn"):
+            with st_module.spinner("Generating Sweetviz report... This might take a moment."):
+                report_file = generate_sweetviz_report(df, SWEETVIZ_REPORT_PATH)
+                st_module.session_state.eda_sweetviz_report_path = report_file
 
-            if not api_key_input:
-                st.warning("Please enter your Google Gemini API Key in the sidebar to enable this feature.")
-            else:
-                if st.button("Analyze with Gemini", key="gemini_button"):
-                     with st.spinner("Generating data summary and calling Gemini API..."):
-                         summary = get_data_summary(df)
-                         if summary:
-                             st.session_state.gemini_insights = generate_gemini_insights(summary, api_key_input)
-                         else:
-                              st.error("Could not generate data summary for Gemini.")
-                              st.session_state.gemini_insights = None
+        if st_module.session_state.eda_sweetviz_report_path:
+            try:
+                with open(st_module.session_state.eda_sweetviz_report_path, 'r', encoding='utf-8') as f:
+                    html_content = f.read()
+                st_module.components.v1.html(html_content, height=600, scrolling=True)
+                st_module.success(f"Report generated: {st_module.session_state.eda_sweetviz_report_path}")
+                # Add download button
+                with open(st_module.session_state.eda_sweetviz_report_path, "rb") as fp:
+                    st_module.download_button(
+                        label="Download Report (HTML)",
+                        data=fp,
+                        file_name="sweetviz_report.html",
+                        mime="text/html"
+                    )
+            except FileNotFoundError:
+                st_module.error("Report file not found. Please generate it again.")
+                st_module.session_state.eda_sweetviz_report_path = None # Reset state
+            except Exception as e:
+                st_module.error(f"Could not display report: {e}")
+        else:
+            st_module.info("Click the button above to generate the Sweetviz report.")
 
-                # Display insights if they exist in session state
-                if st.session_state.gemini_insights:
-                     st.markdown("---") # Separator
-                     st.markdown(st.session_state.gemini_insights) # Display Markdown
-                elif 'gemini_button' in st.session_state and not st.session_state.gemini_insights :
-                     st.warning("Analysis failed or was skipped. Ensure API key is valid and click the button above.")
+    with tab3:
+        st_module.subheader("Gemini AI Analysis")
+        if not api_key:
+             st_module.warning("Google Gemini API Key not found. Please configure it in the main app sidebar to enable AI analysis.")
+        else:
+             if st_module.button("Generate Gemini Insights", key="gen_gemini_btn"):
+                 with st_module.spinner("Querying Gemini AI for insights... Please wait."):
+                     data_summary = get_data_summary(df)
+                     if data_summary:
+                         insights = generate_gemini_insights(data_summary, api_key)
+                         st_module.session_state.eda_gemini_insights = insights
+                     else:
+                         st_module.error("Could not generate data summary for Gemini.")
+                         st_module.session_state.eda_gemini_insights = None
 
+             if st_module.session_state.eda_gemini_insights:
+                 st_module.markdown(st_module.session_state.eda_gemini_insights)
+                 # Add download button for insights
+                 st_module.download_button(
+                      label="Download Insights (TXT)",
+                      data=st_module.session_state.eda_gemini_insights,
+                      file_name="gemini_eda_insights.txt",
+                      mime="text/plain"
+                 )
+             else:
+                 st_module.info("Click the button above to get AI-powered insights based on your data's statistics.")
 
-        with tab4:
-             st.subheader("dtale Interactive Exploration")
-             st.info("dtale provides a rich, interactive spreadsheet-like interface for your data. Clicking the button below will attempt to launch it in a *new browser tab*.")
+    with tab4:
+        st_module.subheader("Interactive Exploration with dtale")
+        st_module.info("Launch an interactive dashboard for deeper data exploration in a new browser tab.")
+        if st_module.button("Launch dtale Dashboard", key="launch_dtale_btn"):
+            with st_module.spinner("Launching dtale... check for a new browser tab."):
+                 dtale_url = launch_dtale(df)
+                 st_module.session_state.eda_dtale_url = dtale_url # Store URL even if browser fails to open
+                 if dtale_url:
+                     st_module.markdown(f"dtale is running at: [{dtale_url}]({dtale_url})")
+                 else:
+                     st_module.error("Failed to launch dtale.")
 
-             if st.button("Launch dtale Dashboard", key="dtale_button"):
-                  with st.spinner("Launching dtale instance..."):
-                      url = launch_dtale(df)
-                      st.session_state.dtale_url = url # Store URL in session
-                      # Small delay potentially helps browser opening
-                      time.sleep(1)
-
-             if st.session_state.dtale_url:
-                  st.success(f"dtale should be running at: {st.session_state.dtale_url}")
-                  st.markdown(f"[Click here to open dtale]({st.session_state.dtale_url}) if it didn't open automatically.", unsafe_allow_html=True)
-             elif 'dtale_button' in st.session_state and not st.session_state.dtale_url:
-                  st.warning("dtale launch failed or was skipped.")
-
-
-    else:
-        st.error("Could not load the DataFrame from the uploaded file.")
-else:
-    st.info("Awaiting CSV file upload...")
+        # Display the URL if it was successfully launched previously in the session
+        if st_module.session_state.get('eda_dtale_url'):
+            st_module.markdown(f"*Previous dtale instance URL (might still be running):* [{st_module.session_state.eda_dtale_url}]({st_module.session_state.eda_dtale_url})")
