@@ -1,4 +1,9 @@
-  DataPilot offers a no-code platform that automates the end-to-end machine learning process from data ingestion to insight generation. Its unique capability is in its automation of data cleaning, model training, evaluation, and hyperparameter tuning powered by ai agents  allowing individuals without ML expertise to access advanced analytics. By doing so, it accelerates decision-making and innovation across different domains. 
+## Here is the detailed video explaining the functionalities: 
+https://youtu.be/Ycud4n3gxAY?si=jWDw6ZuufXkOfj01
+
+ 
+ 
+ DataPilot offers a no-code platform that automates the end-to-end machine learning process from data ingestion to insight generation. Its unique capability is in its automation of data cleaning, model training, evaluation, and hyperparameter tuning powered by ai agents  allowing individuals without ML expertise to access advanced analytics. By doing so, it accelerates decision-making and innovation across different domains. 
  # DataPilot: No-Code ML Assistant
 
 DataPilot is a Streamlit web application designed to empower users with limited coding experience to perform end-to-end machine learning tasks. It allows users to upload their datasets (CSV format), explore the data, automatically train and compare various ML models, generate business-focused insights using AI, perform automated feature engineering, and test trained models.
@@ -141,5 +146,3 @@ DataPilot is a Streamlit web application designed to empower users with limited 
 - Performance Evaluation – Visualizes and summarizes key metrics like accuracy and F1-score.
 - Insightful Reporting – Generates easy-to-understand reports with actionable insights.
 - Exploratory Data Analysis (EDA) – Helps visualize and understand your dataset through intuitive charts and comparisons.
-## Here is the detailed video explaining the functionalities: 
-https://youtu.be/Ycud4n3gxAY?si=jWDw6ZuufXkOfj01
