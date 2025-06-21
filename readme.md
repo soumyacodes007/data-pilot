@@ -141,3 +141,5 @@ DataPilot is a Streamlit web application designed to empower users with limited 
 - Performance Evaluation – Visualizes and summarizes key metrics like accuracy and F1-score.
 - Insightful Reporting – Generates easy-to-understand reports with actionable insights.
 - Exploratory Data Analysis (EDA) – Helps visualize and understand your dataset through intuitive charts and comparisons.
+## Here is the detailed video explaining the functionalities: 
+https://youtu.be/Ycud4n3gxAY?si=jWDw6ZuufXkOfj01
